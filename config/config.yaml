@@ -1,0 +1,9 @@
+pdf_path: "../input/test_sahafa.pdf"
+nom_journal: "JrSahafa"
+model_path: "../models/yolo_v8/yolov8_newspapers_run_optimized.pt"
+output_root: "../output"
+dpi: 200
+yolo_batch_size: 10
+google_credentials: "../config/credentials.json"
+ocr_language_hints: ["ar", "fr"]
+sentence_transformer_model: "paraphrase-multilingual-MiniLM-L12-v2"
