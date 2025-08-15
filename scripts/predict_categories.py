@@ -2,9 +2,10 @@ import json
 import re
 from pathlib import Path
 from transformers import pipeline
-from langdetect import detect
+from langdetect import detect, DetectorFactory
 from tqdm import tqdm
 
+DetectorFactory.seed = 0  # stabilité langdetect
 
 # === Normalisation pour l'arabe ===
 def normalize_arabic(text):
@@ -24,66 +25,99 @@ def is_mostly_numeric_or_symbolic(text):
 def clean_summary(text, is_french=False):
     text = re.sub(r'[|*+()\[\]{}:;]+', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
-    return text.lower() if is_french else normalize_arabic(text)
+    if is_french:
+        return text.lower()
+    return normalize_arabic(text)
 
 def preprocess_text(text):
     try:
         lang = detect(text)
-        is_french = lang == 'fr'
+        is_french = (lang == 'fr')
     except:
         is_french = False
     cleaned_text = clean_summary(text, is_french)
     if len(cleaned_text) < 20 or is_mostly_numeric_or_symbolic(cleaned_text):
         return None
-    return cleaned_text
+    return cleaned_text[:1000]  # limite caractères pour éviter crash
 
-
-# === Mapping ID → catégorie arabe/français
-category_names = {
-    "Actes judiciaires": "اجراءات عدلية / Actes judiciaires",
-    "Fonds de Commerce": "اصول تجارية / Fonds de Commerce",
-    "Convocations": "استدعاءات / Convocations",
-    "Avis aux créanciers": "اعلان للدائنين / Avis aux créanciers",
-    "Gestion de Sociétés": "التصرف في شركات / Gestion de Sociétés",
-    "Associations, Partis, Syndicats et Syndics": "جمعيات واحزاب ونقابات / Associations, Partis, Syndicats et Syndics",
-    "Divers": "مختلفات / Divers"
+# === Mapping label → nom et slug ===
+category_mapping = {
+    "Gestion de Sociétés": {
+        "ar": "التصرف في شركات",
+        "fr": "Gestion de Sociétés",
+        "slug": "gestion_ste"
+    },
+    "Fonds de Commerce": {
+        "ar": "اصول تجارية",
+        "fr": "Fonds de Commerce",
+        "slug": "fond_commerce"
+    },
+    "Associations, partis politiques et syndicats": {
+        "ar": "جمعيات واحزاب ونقابات",
+        "fr": "Associations, partis politiques et syndicats",
+        "slug": "asso_pp_syndic"
+    },
+    "Actes judiciaires": {
+        "ar": "اجراءات عدلية",
+        "fr": "Actes judiciaires",
+        "slug": "act_judciaire"
+    },
+    "Avis aux créanciers": {
+        "ar": "اعلان للدائنين",
+        "fr": "Avis aux créanciers",
+        "slug": "avis_creanciers"
+    },
+    "Convocations": {
+        "ar": "استدعاءات",
+        "fr": "Convocations",
+        "slug": "convocation"
+    },
+    "Divers": {
+        "ar": "مختلفات",
+        "fr": "Divers",
+        "slug": "autre"
+    }
 }
 
+# === Pipeline global pour éviter rechargement
+classifier = None
 
-# === Prédiction des catégories
 def classify_categories(json_path: Path, model_dir: Path):
-    with json_path.open("r", encoding="utf-8") as f:
-        articles = json.load(f)
+    global classifier
+    if classifier is None:
+        classifier = pipeline("text-classification", model=str(model_dir), tokenizer=str(model_dir))
 
-    classifier = pipeline("text-classification", model=str(model_dir), tokenizer=str(model_dir))
+    with json_path.open("r", encoding="utf-8") as f:
+        data = json.load(f)  # Load the full JSON object
+        articles = data.get("articles", [])  # Access the articles list
 
     for article in tqdm(articles, desc="📊 Prédiction des catégories"):
         if not article.get("is_legal", False):
             continue
 
-        text = preprocess_text(article["articleText"])
+        text = preprocess_text(article.get("articleText", ""))
         if not text:
-            article["categories"] = []
+            article["cat"] = []
             continue
 
         try:
-            result = classifier(text, truncation=True)[0]
+            result = classifier(text, truncation=True, max_length=512)[0]
             label = result["label"]
-            label_name = category_names.get(label, "مختلفات / Divers")  
+            mapped = category_mapping.get(label, category_mapping["Divers"])
 
-            # Séparation arabe / français
-            if " / " in label_name:
-                arabic, french = label_name.split(" / ", 1)
-            else:
-                arabic, french = label_name, label
-
-            article["categories"] = [arabic.strip(), french.strip()]
+            article["cat"] = [{
+                "slug": mapped["slug"],
+                "name": {
+                    "fr": mapped["fr"],
+                    "ar": mapped["ar"]
+                }
+            }]
 
         except Exception as e:
-            print(f"❌ Erreur pour article: {article['title']} → {e}")
-            article["categories"] = []
+            print(f"❌ Erreur pour article: {article.get('title', '')} → {e}")
+            article["cat"] = []
 
     with json_path.open("w", encoding="utf-8") as f:
-        json.dump(articles, f, ensure_ascii=False, indent=4)
+        json.dump(data, f, ensure_ascii=False, indent=4)  # Write back the full object
 
-    print(f"\n✅ Fichier mis à jour avec catégories dans : {json_path}")
+    print(f"\n✅ Fichier mis à jour avec champ 'cat' dans : {json_path}")

@@ -1,4 +1,3 @@
-# C:\Users\chaym\Desktop\PFE\extraction_articles\scripts\convert_pdf_to_images.py
 from pdf2image import convert_from_path
 from utils import ensure_dir
 from datetime import datetime
@@ -10,15 +9,14 @@ logger = logging.getLogger(__name__)
 def convert_pdf_to_images(pdf_path: str, nom_journal: str, output_root: str = "output", config=None) -> str:
     """Convert PDF to images and return output directory."""
     if config is None:
-        # Fallback to default if config is not provided
         import yaml
         with open("../config/config.yaml", "r") as f:
             config = yaml.safe_load(f)
-    journaux_ar = {"JrChourouk", "JrAssabeh", "JrSahafa"}
-    langue = "ar" if nom_journal in journaux_ar else "fr"
+
     date_du_jour = datetime.today().strftime("%Y-%m-%d")
-    nom_dossier = f"{nom_journal} - {langue} - {date_du_jour}"
-    output_dir = Path(output_root) / nom_dossier
+
+    # ✅ Nouvelle structure : output/nom_journal/date_du_jour
+    output_dir = Path(output_root) / nom_journal / date_du_jour
     ensure_dir(output_dir)
 
     if not Path(pdf_path).exists():

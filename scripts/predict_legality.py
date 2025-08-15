@@ -39,17 +39,17 @@ def preprocess_text(text):
 
 def classify_articles(json_path: Path, model_dir: Path):
     with json_path.open("r", encoding="utf-8") as f:
-        articles = json.load(f)
+        data = json.load(f)
+
+    articles = data.get("articles", [])
 
     classifier = pipeline("text-classification", model=str(model_dir), tokenizer=str(model_dir))
-
 
     for article in tqdm(articles, desc="🔍 Classification des articles"):
         text = preprocess_text(article["articleText"])
         if not text:
             article["is_legal"] = False
             continue
-
         try:
             result = classifier(text, truncation=True)[0]
             label = result["label"]
@@ -59,5 +59,6 @@ def classify_articles(json_path: Path, model_dir: Path):
             article["is_legal"] = False
 
     with json_path.open("w", encoding="utf-8") as f:
-        json.dump(articles, f, ensure_ascii=False, indent=4)
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
     print(f"\n✅ Articles mis à jour avec le champ 'is_legal' dans : {json_path}")

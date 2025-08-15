@@ -7,6 +7,8 @@ from associate_articles import associate_articles
 from export_articles_to_json import export_articles_to_json
 from predict_legality import classify_articles
 from predict_categories import classify_categories
+from merge_images import merge_images_in_folder
+from clean_output import clean_png_files, collect_final_images
 from pathlib import Path
 import yaml
 
@@ -35,31 +37,53 @@ if __name__ == "__main__":
     output_text_dir = output_dir / "ocr_text"
     apply_ocr_to_segmented_images(segment_dir, output_text_dir, config.get("ocr_language_hints", ["ar", "fr"]))
 
-    #  Étape 4 : Détection des articles incomplets
-    detect_incomplete_articles(output_dir)
+    # Vérifier s'il y a des articles_01 dans ocr_text
+    article_01_files = list(output_text_dir.glob("*article_01_*.txt"))
+    no_article_01 = len(article_01_files) == 0
 
-    # ÉTAPE 5 : Association des articles incomplets avec article_01 
-    associate_articles(output_dir)
+    if not no_article_01:
+        # Étape 4 : Détection des articles incomplets
+        detect_incomplete_articles(output_dir)
 
-    # ÉTAPE 6 : Export JSON des articles OCR et complets
+        # Étape 5 : Association articles incomplets / article_01
+        associate_articles(output_dir)
+        
+        # Étape 5.5 : Fusionner les images dans 'complete_articles'
+        complete_articles_dir = output_dir / "complete_articles"
+        merged_images_dir = complete_articles_dir / "merged_images"
+        if complete_articles_dir.exists():
+            merge_images_in_folder(complete_articles_dir, merged_images_dir)
+        else:
+            print("Dossier 'complete_articles' non trouvé, fusion des images ignorée.")
+
+        
+    else:
+        print("Aucun article_01 détecté, on saute la détection d'incomplets et l'association.")
+
+    # Étape 6 : Nettoyer et collecter les images finales
+    clean_png_files(output_dir)
+    collect_final_images(output_dir)
+    
+    # Étape 7 : Export JSON
     final_json = output_dir / "articles_final.json"
 
     export_articles_to_json(
-    complete_dir=output_dir / "complete_articles",
-    ocr_dir=output_dir / "ocr_text",
-    incomplets_dir=output_dir / "incomplets",
-    segment_dir=output_dir / "segment",
-    output_json_path=final_json
+        complete_dir=output_dir / "complete_articles",  # peut ne pas exister, la fonction gère
+        ocr_dir=output_text_dir,
+        incomplets_dir=output_dir / "incomplets",       # peut ne pas exister, la fonction gère
+        output_json_path=final_json
     )
 
-    # Étape 7 : Prédire si chaque article est légal ou non
+
+    # Étape 8 : Classification légalité
     classify_articles(
         json_path=final_json,
         model_dir=Path("../models/legal_classifier_roberta_ADA")
     )
+    # Étape 9 : Classification catégories
+    classify_categories(
+        json_path=final_json,
 
-# Étape 8 : Prédire les catégories des articles légaux
-classify_categories(
-    json_path=final_json,
-    model_dir=Path("../models/roberta_multiclass_classifier")
-)
+        model_dir=Path("../models/roberta_multiclass_classifier")
+    )
+    

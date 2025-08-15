@@ -1,143 +1,117 @@
 import json
+import time
 from pathlib import Path
 import re
-from langdetect import detect
-from datetime import datetime
 
-def extract_reference_from_last_line(content):
-    last_line = content.strip().split('\n')[-1]
-    matches = re.findall(r'\b(?:\$?[A-Z]?[0-9]{4,}[A-Z0-9]*|[0-9]{4,}[A-Z]{1,})\b', last_line)
-    return matches[0] if matches else None
+def detect_reference(article_text: str) -> str:
+    """Détecte la référence si elle existe."""
+    lines = [line.strip() for line in article_text.strip().split("\n") if line.strip()]
+    if not lines:
+        return "Pas de référence trouvée"
 
-def detect_lang_from_folder(folder_name):
-    if "- ar -" in folder_name:
-        return "ar"
-    elif "- fr -" in folder_name:
-        return "fr"
-    else:
-        return "unknown"
+    last_line = lines[-1]
+    last_line_clean = re.sub(r"\s+", " ", last_line)
 
-def extract_date_from_folder(folder_name):
-    match = re.search(r"\d{4}-\d{2}-\d{2}", folder_name)
-    return match.group(0) if match else "1900-01-01"
+    date_patterns = [
+        r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b",
+        r"\b\d{1,2}\s+[A-Za-zéûôâîç]+\s+\d{4}\b",
+        r"\b\d{1,2}\s+[ء-ي]+\s+\d{4}\b"
+    ]
+    for pattern in date_patterns:
+        if re.search(pattern, last_line_clean):
+            return "Pas de référence trouvée"
 
-def extract_page_from_filename(filename):
+    ref_pattern = r"^[\$A-Za-z0-9\u0621-\u064A:/\\\-\_,\. ]{2,}$"
+    if re.match(ref_pattern, last_line_clean) and len(last_line_clean.split()) <= 4:
+        return last_line_clean.strip()
+
+    return "Pas de référence trouvée"
+
+def detect_lang_from_folder(folder_path: Path) -> str:
+    """Détermine la langue selon le nom du journal."""
+    journaux_ar = {"JrChourouk", "JrAssabeh", "JrSahafa"}
+    nom_journal = folder_path.name
+    return "ar" if nom_journal in journaux_ar else "fr"
+
+def extract_date_from_folder(folder_path: Path) -> str:
+    """Extrait la date depuis un chemin output/nom_journal/YYYY-MM-DD."""
+    date_str = folder_path.name
+    return date_str if re.match(r"\d{4}-\d{2}-\d{2}", date_str) else "1900-01-01"
+
+def extract_page_from_filename(filename: str):
+    """Extrait le numéro de page depuis le nom du fichier."""
     match = re.search(r'_page_(\d+)', filename)
-    return int(match.group(1)) if match else None
+    return match.group(1) if match else None
 
-def export_articles_to_json(complete_dir: Path, ocr_dir: Path, incomplets_dir: Path, segment_dir: Path, output_json_path: Path):
-    all_articles = []
+def export_articles_to_json(complete_dir: Path, ocr_dir: Path, incomplets_dir: Path, output_json_path: Path):
+    """Exporte les articles selon la présence ou non d'articles incomplets."""
+    date_folder = complete_dir.parent
+    nom_journal = date_folder.parent.name
+    date_str = extract_date_from_folder(date_folder)
+    langue = detect_lang_from_folder(Path(nom_journal))
 
-    folder_name = complete_dir.parent.name
-    journal_name = folder_name.split(" - ")[0].strip()
-    lang = detect_lang_from_folder(folder_name)
-    date_str = extract_date_from_folder(folder_name)
+    # Dossier parent des images PNG
+    images_dir = date_folder
 
-    print(f"\n=== Export JSON pour: {journal_name} ({lang}) - {date_str} ===\n")
+    articles = []
 
-    # === 1. Articles COMPLETS
-    for file_path in sorted(complete_dir.rglob("*.txt")):
-        try:
-            with file_path.open('r', encoding='utf-8') as f:
-                content = f.read().strip()
+    # Vérifier présence article_01
+    has_article_01 = any(ocr_dir.glob("*article_01_*.txt"))
 
-            if not content:
-                print(f"🔸 Ignoré (vide): {file_path.name}")
-                continue
+    # Liste des articles incomplets
+    incomplets_files = set()
+    if incomplets_dir.exists():
+        incomplets_files = {f.name for f in incomplets_dir.glob("*article_00_*.txt")}
 
-            reference = extract_reference_from_last_line(content)
-            page = extract_page_from_filename(file_path.name)
-            file_field = [str(p) for p in sorted(file_path.parent.glob("*.png"))]
+    def add_article(txt_path: Path):
+        """Ajoute un article au tableau final."""
+        content = txt_path.read_text(encoding="utf-8").strip()
+        if not content:
+            return
 
-            if not file_field:
-                print(f"⚠️ Aucune image trouvée pour: {file_path.name}")
-                continue
+        reference = detect_reference(content)
+        page = extract_page_from_filename(txt_path.name)
+        image_name = txt_path.stem + ".png"  # même nom que le txt
+        image_path = images_dir / image_name
 
-            article_data = {
-                "doc_id": date_str,
-                "title": f"{journal_name} - {lang} - {date_str}" + (f" - {reference}" if reference else ""),
-                "reference": reference,
-                "lang": lang,
-                "articleText": content,
-                "publishedAt": f"{date_str}T00:00:00+00:00",
-                "file": file_field,
-                "source": journal_name,
-                "source_grps": ["ANNONCES"],
-                "categories": [],
-                "page": page,
-                "extras": None
-            }
-            all_articles.append(article_data)
-            print(f"✅ Article COMPLET ajouté : {file_path.name}")
+        articles.append({
+            "title": f"{nom_journal} - {langue} - {date_str} - {reference}",
+            "reference": reference,
+            "lang": langue,
+            "articleText": content,
+            "date": "-".join(reversed(date_str.split("-"))),
+            "file": str(image_path),
+            "source": nom_journal,
+            "source_grps": ["ANNONCES"],
+            "cat": {},
+            "page": str(page) if page else None,
+            "extras": None
+        })
 
-        except Exception as e:
-            print(f"❌ Erreur complete_article: {file_path.name} : {e}")
+    if not has_article_01:
+        # Cas simple : tous les txt de ocr_text
+        for txt_path in ocr_dir.glob("*.txt"):
+            add_article(txt_path)
+    else:
+        # 1. Articles article_00 qui ne sont pas incomplets
+        for txt_path in ocr_dir.glob("*article_00_*.txt"):
+            if txt_path.name not in incomplets_files:
+                add_article(txt_path)
 
-    # === 2. Liste des incomplets
-    incomplets_files = set(f.name for f in incomplets_dir.glob("*article_00_*.txt"))
+        # 2. Articles complets fusionnés
+        for subdir in complete_dir.glob("article_complet_*"):
+            if subdir.is_dir():
+                for txt_path in subdir.glob("*.txt"):
+                    add_article(txt_path)
 
-    # === 3. OCR restants
-    for file_path in sorted(ocr_dir.glob("*.txt")):
-        filename = file_path.name
-        filename_stem = file_path.stem
+    # Structure finale
+    output_data = {
+        "doc_id": date_str,
+        "doc_type": nom_journal,
+        "creation_date": int(time.time()),
+        "articles": articles
+    }
 
-        if "article_complet" in filename or "article_01" in filename:
-            continue
-
-        is_article_00 = "article_00" in filename
-        is_incomplet = filename in incomplets_files
-
-        if is_article_00 and is_incomplet:
-            print(f"🔸 Ignoré : {filename} est un article_00 incomplet.")
-            continue
-
-        try:
-            with file_path.open('r', encoding='utf-8') as f:
-                content = f.read().strip()
-
-            if not content:
-                print(f"🔸 Ignoré OCR vide : {filename}")
-                continue
-
-            reference = extract_reference_from_last_line(content)
-            if not reference:
-                print(f"🔸 Ignoré OCR sans référence : {filename}")
-                continue
-
-            # 📌 Recherche image dans ocr_dir d'abord
-            image_path = ocr_dir / (filename_stem + ".png")
-            if not image_path.exists():
-                # 📌 Sinon dans segment_dir
-                image_path = segment_dir / (filename_stem + ".png")
-                if not image_path.exists():
-                    print(f"🔸 Ignoré OCR sans image trouvée : {filename}")
-                    continue
-
-            page = extract_page_from_filename(filename)
-
-            article_data = {
-                "doc_id": date_str,
-                "title": f"{journal_name} - {lang} - {date_str}" + (f" - {reference}" if reference else ""),
-                "reference": reference,
-                "lang": lang,
-                "articleText": content,
-                "publishedAt": f"{date_str}T00:00:00+00:00",
-                "file": str(image_path),
-                "source": journal_name,
-                "source_grps": ["ANNONCES"],
-                "categories": [],
-                "page": page,
-                "extras": None
-            }
-
-            all_articles.append(article_data)
-            print(f"✅ Article OCR ajouté : {filename}")
-
-        except Exception as e:
-            print(f"❌ Erreur OCR : {filename} : {e}")
-
-    # === Sauvegarde JSON
-    print(f"\n🔹 TOTAL articles exportés : {len(all_articles)}\n")
-    with output_json_path.open('w', encoding='utf-8') as f:
-        json.dump(all_articles, f, ensure_ascii=False, indent=4)
-    print(f"📦 Fichier JSON créé : {output_json_path}")
+    # Sauvegarde JSON
+    output_json_path.write_text(json.dumps(output_data, ensure_ascii=False, indent=4), encoding="utf-8")
+    print(f"✅ JSON généré : {output_json_path} ({len(articles)} articles)")
