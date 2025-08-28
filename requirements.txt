@@ -1,0 +1,36 @@
+# Computer Vision and Image Processing
+opencv-python==4.12.0.88
+pdf2image==1.17.0
+Pillow==11.2.1
+ultralytics==8.3.173
+
+# Google Cloud Vision API
+google-cloud-vision==3.10.2
+google-auth==2.40.3
+# Deep Learning and NLP
+torch==2.1.0+cu118
+torchvision==0.16.0+cu118
+transformers==4.41.2
+tokenizers==0.19.1
+
+# Scientific Computing
+numpy==1.24.4
+pandas==2.2.3
+scikit-learn==1.6.1
+
+# Language Detection and Text Processing
+langdetect==1.0.9
+regex==2024.11.6
+
+# Progress Bars
+tqdm==4.67.1
+
+# Configuration Management
+PyYAML==6.0.2
+
+# Utilities
+python-dateutil==2.9.0.post0
+
+# Optional: For better performance on CUDA
+# Uncomment if you have CUDA-compatible GPU
+# torch-audio==2.0.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
